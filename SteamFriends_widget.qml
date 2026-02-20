@@ -27,14 +27,15 @@ PluginComponent {
     // Load API key from saved settings
     property string apiKey: pluginService ? pluginService.loadPluginData("steamfriends", "apikey", ""): ""
     property string steamId: pluginService ? pluginService.loadPluginData("steamfriends", "steamid", "") : ""
+     
 
     // React when settings change
     Connections {
         target: pluginService
         function onPluginDataChanged(changedPluginId, changedKey) {
-            if (changedPluginId === "myPlugin" && changedKey === "api") {
+            if (changedPluginId === "steamfriends" && (changedKey === "apikey" || changedKey === "steamid")) {
                 apiKey = pluginService.loadPluginData("steamfriends", "apikey", "")
-                steamID = pluginService.loadPluginData("steamfriends", "steamid", "")
+                steamId = pluginService.loadPluginData("steamfriends", "steamid", "")
                 console.log("API key updated:", apiKey) //Debug log to verify the API key is being updated
                 console.log("STEAM ID updated:", steamId) //Debug log to verify the STEAM ID is being updated
             }
@@ -66,40 +67,43 @@ PluginComponent {
     
     onFriendsListChanged: updateSortedList()
 
-    //Process --------------------------------------------------------------------------------
+    // Process --------------------------------------------------------------------------------
     // This process runs the steam_friends.sh script to fetch the friend list and count, it expects a JSON output with 
-    //the format: {"friendCount": 5, "friends": [{"name": "Friend1", "status": "Playing", "game": "Game1"}, {"name": "Friend2", "status": "Online", "game": ""}]}
+    // the format: {"friendCount": 5, "friends": [{"name": "Friend1", "status": "Playing", "game": "Game1"}, {"name": "Friend2", "status": "Online", "game": ""}]}
     Process {
         id: friendFetcher
         command: ["sh", root.scriptPath, root.apiKey, root.steamId, "json"]
-        running: true
+        running: root.apiKey !== "" && root.steamId !== ""
 
         stdout: SplitParser {
             onRead: data => {
                 let output = data.trim()
+                console.log("")
                 console.log("-----------------------------------------------------------------------")
-                console.log("Raw output:", output)
-                console.log("API:", root.apiKey)
-                console.log("STEAMID:", steamId)
+                console.log("(SF) Steam Friends now running...")
+                console.log("(SF) API:", root.apiKey)
+                console.log("(SF) STEAMID:", steamId)
                 
                 try {
                     let json = JSON.parse(output)
                     root.friendCount = json.friendCount.toString()
                     root.friendsList = json.friends || []
                     root.updateSortedList()
-                    console.log("Parsed count:", root.friendCount)
-                    console.log("Parsed friends:", root.friendsList.length)
+                    console.log("(SF) Parsed count:", root.friendCount)
+                    console.log("(SF) Parsed friends:", root.friendsList.length)
                 } catch (e) {
-                    console.error("Error parsing JSON:", e)
-                    console.log("Output was:", output)
+                    console.error("(SF) Error parsing JSON:", e)
+                    console.log("(SF) Output was:", output)
                 }
+                console.log("")
+                console.log("(SF):   ", output)
                 console.log("-----------------------------------------------------------------------")
             }
-        } 
+        }
     }
 
-    //Timer --------------------------------------------------------------------------------
-    //This timer will refresh the friend list every 5 minutes by restarting the process
+    // Timer --------------------------------------------------------------------------------
+    // This timer will refresh the friend list every 5 minutes by restarting the process
     Timer {
         interval: 300000 
         running: true
@@ -110,7 +114,7 @@ PluginComponent {
         }
     }
 
-    //V Pill -------------------------------------------------------------------------------
+    // V Pill -------------------------------------------------------------------------------
     // Vertical pill content - This is the content that appears in the vertical bar, it will
     verticalBarPill: Component {
         Column {
@@ -133,7 +137,7 @@ PluginComponent {
         }
     }
 
-    //H Pill -------------------------------------------------------------------------------
+    // H Pill -------------------------------------------------------------------------------
     // Horizontal pill content - This is the content that appears in the horizontal bar, it will show the number of friends online and an icon
     horizontalBarPill: Component {
         Row {
@@ -156,7 +160,7 @@ PluginComponent {
         }
     }
 
-    //Row -------------------------------------------------------------------------------
+    // Row -------------------------------------------------------------------------------
     // This is the popout content that appears when you click the pill, it will show a list of friends with their status and game if they are playing something
     popoutContent: Component {
         PopoutComponent {
@@ -213,7 +217,7 @@ PluginComponent {
                         spacing: Theme.spacingS
                         model: root.sortedFriendsList
                        
-                        //This is each friend entry, it will show the friend's name, status, and game if they are playing something
+                        // This is each friend entry, it will show the friend's name, status, and game if they are playing something
                         delegate: Rectangle {
                             width: parent.width
                             height: friendRow.implicitHeight + Theme.spacingS * 2
@@ -249,7 +253,7 @@ PluginComponent {
                                         font.pixelSize: Theme.fontSizeXLarge
                                         color: Theme.primary
                                     }
-                                    //Status or game info
+                                    // Status or game info
                                     StyledText {
                                         text: modelData.game && modelData.game.length > 0 ? 
                                               "Playing: " + modelData.game : 

@@ -1,4 +1,4 @@
-# STEAM Friends
+# Steam Friends
 A dankbar widget to show the number of friends online and a popout to tell you who!
 
 ## Screenshot
