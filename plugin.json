@@ -1,0 +1,16 @@
+{
+    "id": "steamfriends",
+    "name": "Steam Friends",
+    "description": "Shows how many Steam friends are online and who they are.",
+    "author": "Banicans",
+    
+    "icon": "contacts",
+	"component": "./SteamFriends_widget.qml",
+    "settings": "./SteamFriends_settings.qml",
+    "type": "widget",
+    "capabilities":["dankbar-widget"], 
+	"permissions": [
+		"settings_read",
+		"settings_write"
+	]
+}
