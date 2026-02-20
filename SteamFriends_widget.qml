@@ -35,8 +35,8 @@ PluginComponent {
             if (changedPluginId === "myPlugin" && changedKey === "api") {
                 apiKey = pluginService.loadPluginData("steamfriends", "apikey", "")
                 steamID = pluginService.loadPluginData("steamfriends", "steamid", "")
-                console.log("API key updated:", apiKey)
-                console.log("STEAM ID updated:", steamId)
+                console.log("API key updated:", apiKey) //Debug log to verify the API key is being updated
+                console.log("STEAM ID updated:", steamId) //Debug log to verify the STEAM ID is being updated
             }
         }
     }

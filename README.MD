@@ -14,5 +14,10 @@ Very easy, just do one of the following:
 -Open DMS settings > plugins > browse > seach > Install
 -On the GitHub page > Code > Download Zip > extract it to: ~/.config/DankMaterialShell/plugins
 
+## Features
+-Sort by status or by user name
+-Shows which friends are online and their status
+-If in a game, show which game
+
 ## Author
 Created by banicans
