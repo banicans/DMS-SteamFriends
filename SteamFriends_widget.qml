@@ -27,7 +27,6 @@ PluginComponent {
     // Load API key from saved settings
     property string apiKey: pluginService ? pluginService.loadPluginData("steamfriends", "apikey", ""): ""
     property string steamId: pluginService ? pluginService.loadPluginData("steamfriends", "steamid", "") : ""
-     
 
     // React when settings change
     Connections {
@@ -36,8 +35,8 @@ PluginComponent {
             if (changedPluginId === "steamfriends" && (changedKey === "apikey" || changedKey === "steamid")) {
                 apiKey = pluginService.loadPluginData("steamfriends", "apikey", "")
                 steamId = pluginService.loadPluginData("steamfriends", "steamid", "")
-                console.log("API key updated:", apiKey) //Debug log to verify the API key is being updated
-                console.log("STEAM ID updated:", steamId) //Debug log to verify the STEAM ID is being updated
+                console.log("(SF) API key updated:", apiKey) //Debug log to verify the API key is being updated
+                console.log("(SF) STEAM ID updated:", steamId) //Debug log to verify the STEAM ID is being updated
             }
         }
     }

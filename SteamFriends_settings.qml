@@ -25,7 +25,7 @@ PluginSettings {
         defaultValue: ""
     }
 
-     StringSetting {
+    StringSetting {
         settingKey: "steamid"
         label: "Steam ID"
         description: "STEAM_ID goes here"
