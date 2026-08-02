@@ -2,7 +2,9 @@
 A dankbar widget to show the number of friends online and a popout to tell you who!
 
 ## Screenshot
-![Horizontal Layout](./Screenshot.png)
+![Popout](./Screenshot.png)
+
+![Horizontal Pill (text off)](./Screenshot2.png) ![Horizontal Pill (text on)](./Screenshot3.png)
 
 ## Features
 - Sort by status or by user name, with an icon-only sort/refresh toolbar
