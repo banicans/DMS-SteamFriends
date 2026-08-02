@@ -21,12 +21,21 @@ PluginComponent {
     // This variable stores the sorted friend list that is used for display, it is updated whenever friendsList changes or when the sort order changes
     property var sortedFriendsList: []
 
+    // This variable stores the last error reported by the fetch script, empty string means no error
+    property string errorMessage: ""
+
+    // This variable stores the timestamp of the last successful friend list fetch, null means never
+    property var lastUpdated: null
+
     // This variable stores the current sorting order, it can be toggled by the user, and it will determine how the friend list is sorted (0 = alphabetical, 1 = status)
     property string scriptPath: Qt.resolvedUrl("steam_friends.sh").toString().replace("file://", "")
     
     // Load API key from saved settings
     property string apiKey: pluginService ? pluginService.loadPluginData("steamfriends", "apikey", ""): ""
     property string steamId: pluginService ? pluginService.loadPluginData("steamfriends", "steamid", "") : ""
+
+    // Whether the horizontal bar pill shows "X Friends Online" or just the count
+    property bool showFriendsOnlineText: pluginService ? pluginService.loadPluginData("steamfriends", "showFriendsOnlineText", true) : true
 
     // React when settings change
     Connections {
@@ -35,14 +44,16 @@ PluginComponent {
             if (changedPluginId === "steamfriends" && (changedKey === "apikey" || changedKey === "steamid")) {
                 apiKey = pluginService.loadPluginData("steamfriends", "apikey", "")
                 steamId = pluginService.loadPluginData("steamfriends", "steamid", "")
-                console.log("(SF) API key updated:", apiKey) //Debug log to verify the API key is being updated
                 console.log("(SF) STEAM ID updated:", steamId) //Debug log to verify the STEAM ID is being updated
+            }
+            if (changedPluginId === "steamfriends" && changedKey === "showFriendsOnlineText") {
+                showFriendsOnlineText = pluginService.loadPluginData("steamfriends", "showFriendsOnlineText", true)
             }
         }
     }
 
     // This variable determines the sorting order of the friend list, it can be toggled by the user, and it will determine how the friend list is sorted (0 = alphabetical, 1 = status)
-    property int sortOrder: 0 // 0 = alphabetical, 1 = status
+    property int sortOrder: 1 // 0 = alphabetical, 1 = status
     
     function updateSortedList() {
         let sorted = JSON.parse(JSON.stringify(root.friendsList))
@@ -57,13 +68,28 @@ PluginComponent {
                 let aOrder = statusOrder[a.status] ?? 999
                 let bOrder = statusOrder[b.status] ?? 999
                 if (aOrder !== bOrder) return aOrder - bOrder
+                // Group friends playing the same game together
+                if (a.status === "Playing" && b.status === "Playing") {
+                    let gameOrder = (a.game || "").localeCompare(b.game || "")
+                    if (gameOrder !== 0) return gameOrder
+                }
                 return a.name.localeCompare(b.name)
             })
         }
         
         root.sortedFriendsList = sorted
     }
-    
+
+    // Looks up the Steam appid for a game section header, so its capsule icon can be shown
+    function gameIdForSection(sectionName) {
+        for (let i = 0; i < root.sortedFriendsList.length; i++) {
+            if (root.sortedFriendsList[i].game === sectionName) {
+                return root.sortedFriendsList[i].gameid || ""
+            }
+        }
+        return ""
+    }
+
     onFriendsListChanged: updateSortedList()
 
     // Process --------------------------------------------------------------------------------
@@ -80,17 +106,24 @@ PluginComponent {
                 console.log("")
                 console.log("-----------------------------------------------------------------------")
                 console.log("(SF) Steam Friends now running...")
-                console.log("(SF) API:", root.apiKey)
                 console.log("(SF) STEAMID:", steamId)
                 
                 try {
                     let json = JSON.parse(output)
-                    root.friendCount = json.friendCount.toString()
-                    root.friendsList = json.friends || []
-                    root.updateSortedList()
-                    console.log("(SF) Parsed count:", root.friendCount)
-                    console.log("(SF) Parsed friends:", root.friendsList.length)
+                    if (json.error) {
+                        root.errorMessage = json.error
+                        console.error("(SF) Script reported error:", json.error)
+                    } else {
+                        root.errorMessage = ""
+                        root.friendCount = json.friendCount.toString()
+                        root.friendsList = json.friends || []
+                        root.updateSortedList()
+                        root.lastUpdated = new Date()
+                        console.log("(SF) Parsed count:", root.friendCount)
+                        console.log("(SF) Parsed friends:", root.friendsList.length)
+                    }
                 } catch (e) {
+                    root.errorMessage = "Failed to parse Steam response"
                     console.error("(SF) Error parsing JSON:", e)
                     console.log("(SF) Output was:", output)
                 }
@@ -109,7 +142,7 @@ PluginComponent {
         repeat: true
         onTriggered: {
             friendFetcher.running = false
-            friendFetcher.running = true
+            friendFetcher.running = Qt.binding(function() { return root.apiKey !== "" && root.steamId !== "" })
         }
     }
 
@@ -144,14 +177,14 @@ PluginComponent {
             spacing: Theme.spacingXS
 
             DankIcon {
-                name: "contacts"
+                name: "group"
                 color: Theme.primary
                 size: root.iconSize
                 anchors.verticalCenter: parent.verticalCenter
             }
 
             StyledText {
-                text: root.friendCount + " Friends Online"
+                text: root.showFriendsOnlineText ? (root.friendCount + " Friends Online") : root.friendCount
                 font.pixelSize: Theme.fontSizeMedium
                 color: Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
@@ -167,35 +200,64 @@ PluginComponent {
             headerText: root.friendCount + " Friends Online"
             showCloseButton: true
 
-            Row {
+            Item {
                 id: sortRow
                 width: parent.width
-                spacing: Theme.spacingS
-                padding: Theme.spacingM
+                height: buttonRow.implicitHeight + Theme.spacingM * 2
 
-                // Sort button - This button will toggle the sorting order between alphabetical and status
-                DankButton {
-                    text: root.sortOrder === 0 ? "Alphabetical" : "Status"
-                    iconName: "Sort"
-                    iconSize: Theme.iconSizeSmall
-                    onClicked: {
-                        root.sortOrder = (root.sortOrder + 1) % 2
-                        root.updateSortedList()
+                Row {
+                    id: buttonRow
+                    anchors.left: parent.left
+                    anchors.leftMargin: Theme.spacingM
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.spacingS
+
+                    // Sort button - icon-only, toggles the sorting order between alphabetical and status
+                    DankActionButton {
+                        iconName: "Sort"
+                        iconSize: Theme.iconSizeSmall
+                        iconColor: Theme.surfaceVariantText
+                        tooltipText: "Sort: " + (root.sortOrder === 0 ? "Alphabetical" : "Status")
+                        onClicked: {
+                            root.sortOrder = (root.sortOrder + 1) % 2
+                            root.updateSortedList()
+                        }
+                    }
+                    // Refresh button - icon-only, refreshes the friend list by restarting the process
+                    DankActionButton {
+                        iconName: "refresh"
+                        iconSize: Theme.iconSizeSmall
+                        iconColor: Theme.surfaceVariantText
+                        tooltipText: "Refresh"
+                        onClicked: {
+                            friendFetcher.running = false
+                            friendFetcher.running = Qt.binding(function() { return root.apiKey !== "" && root.steamId !== "" })
+                        }
                     }
                 }
-                // Refresh button - This button will refresh the friend list by restarting the process
-                DankButton {
-                    text: "Refresh"
-                    iconName: "refresh"
-                    iconSize: Theme.iconSizeSmall
-                    onClicked: {
-                        friendFetcher.running = false
-                        friendFetcher.running = true
-                    }
+
+                // Last updated timestamp - shown after the first successful fetch
+                StyledText {
+                    anchors.right: parent.right
+                    anchors.rightMargin: Theme.spacingM
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.lastUpdated ? "Updated " + Qt.formatTime(root.lastUpdated, "h:mm AP") : ""
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceText
+                    opacity: 0.7
+                    visible: root.lastUpdated !== null
                 }
             }
-            
-            
+
+            // Error banner - shown when the last fetch attempt failed
+            StyledText {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                text: root.errorMessage
+                color: "#F44336"
+                visible: root.errorMessage.length > 0
+            }
 
             Column {
                 width: parent.width
@@ -215,7 +277,69 @@ PluginComponent {
                         anchors.fill: parent
                         spacing: Theme.spacingS
                         model: root.sortedFriendsList
-                       
+
+                        // Group friends by game when sorted by status (game is "" for non-playing friends, so no header shows for them)
+                        section.property: root.sortOrder === 1 ? "game" : ""
+                        section.criteria: ViewSection.FullString
+                        section.delegate: Component {
+                            Item {
+                                readonly property bool isTrailingBoundary: section.length === 0
+                                    && root.sortedFriendsList.length > 0
+                                    && (root.sortedFriendsList[0].game || "") !== ""
+                                readonly property string gameId: section.length > 0 ? root.gameIdForSection(section) : ""
+                                readonly property string gameIconUrl: gameId !== "" ? ("https://cdn.cloudflare.steamstatic.com/steam/apps/" + gameId + "/capsule_184x69.jpg") : ""
+
+                                width: friendsListView.width
+                                height: section.length > 0 ? (Math.max(sectionText.implicitHeight, gameIcon.height) + Theme.spacingS)
+                                                            : (isTrailingBoundary ? (1 + Theme.spacingS) : 0)
+
+                                Row {
+                                    visible: section.length > 0
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: Theme.spacingXS
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: Theme.spacingXS
+
+                                    Image {
+                                        id: gameIcon
+                                        width: 43
+                                        height: 16
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        visible: gameIconUrl !== ""
+                                        source: gameIconUrl
+                                        asynchronous: true
+                                        fillMode: Image.PreserveAspectCrop
+                                        cache: true
+                                    }
+
+                                    StyledText {
+                                        id: sectionText
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: section
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.bold: true
+                                        color: Theme.primary
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: isTrailingBoundary
+                                    anchors.centerIn: parent
+                                    width: parent.width
+                                    height: 1
+                                    color: Theme.outline
+                                }
+
+                                // Click a game section header to open its Steam store page
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: gameId !== ""
+                                    cursorShape: gameId !== "" ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: Qt.openUrlExternally("https://store.steampowered.com/app/" + gameId)
+                                }
+                            }
+                        }
+
                         // This is each friend entry, it will show the friend's name, status, and game if they are playing something
                         delegate: Rectangle {
                             width: parent.width
@@ -229,16 +353,30 @@ PluginComponent {
                                 anchors.centerIn: parent
                                 spacing: Theme.spacingS
 
+                                // Friend avatar
+                                DankCircularImage {
+                                    width: 36
+                                    height: 36
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    imageSource: modelData.avatarUrl || ""
+                                    fallbackIcon: "person"
+                                    cacheImages: true
+                                }
+
                                 // Status indicator (colored dot)
                                 Rectangle {
                                     width: 8
                                     height: 8
                                     radius: 4
                                     anchors.verticalCenter: parent.verticalCenter
-                                    color: modelData.status === "Playing" ? Theme.accentColor : 
+                                    color: modelData.status === "Playing" ? Theme.accentColor :
                                            modelData.status === "Online" ? "#4CAF50" :
                                            modelData.status === "Away" ? "#FFC107" :
-                                           modelData.status === "Offline" ? "#F44336" : "#9C27B0"
+                                           modelData.status === "Busy" ? "#F44336" :
+                                           modelData.status === "Snooze" ? "#9E9E9E" :
+                                           modelData.status === "Looking to Trade" ? "#26A69A" :
+                                           modelData.status === "Looking to Play" ? "#2196F3" :
+                                           modelData.status === "Offline" ? "#616161" : "#9C27B0"
                                 }
 
                                 // Friend info - This column contains the friend's name and status/game info, it will be to the right of the status indicator
@@ -263,10 +401,18 @@ PluginComponent {
                                     }
                                 }
                             }
+
+                            // Click a friend to open a chat with them in Steam
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (modelData.steamid) {
+                                        Qt.openUrlExternally("steam://friends/message/" + modelData.steamid)
+                                    }
+                                }
+                            }
                         }
-                        ScrollBar.vertical: DankScrollbar {
-                        id: scrollbar
-                    }
                     }
                 }
 

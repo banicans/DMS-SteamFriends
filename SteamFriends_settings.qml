@@ -32,4 +32,11 @@ PluginSettings {
         placeholder: "Enter text"
         defaultValue: ""
     }
+
+    ToggleSetting {
+        settingKey: "showFriendsOnlineText"
+        label: "Show \"Friends Online\" text"
+        description: "When enabled, the bar shows \"X Friends Online\". When disabled, it just shows the count."
+        defaultValue: true
+    }
 }
