@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import QtQuick.Shapes
+import Qt5Compat.GraphicalEffects
 import Quickshell
 import Quickshell.Io
 import qs.Common
@@ -16,6 +17,7 @@ PluginComponent {
 
     // Count and raw friend list
     property string friendCount: "0"
+    property string userAvatarUrl: ""
     property var friendsList: []
     property var sortedFriendsList: []
     property var friendGroups: [] // Grouped lists for separate containers
@@ -246,6 +248,7 @@ PluginComponent {
                     } else {
                         root.errorMessage = "";
                         root.friendCount = json.friendCount ? json.friendCount.toString() : "0";
+                        root.userAvatarUrl = json.userAvatarUrl || "";
                         root.friendsList = json.friends || [];
                         root.updateSortedList();
                         root.lastUpdated = new Date();
@@ -270,11 +273,11 @@ PluginComponent {
             id: verticalPillColumn
             spacing: Theme.spacingS
 
-            DankIcon {
-                name: "group"
-                color: Theme.widgetIconColor || Theme.primary
+            DankSVGIcon {
+                source: Qt.resolvedUrl("assets/Steam_icon_logo.svg")
                 size: root.iconSize
                 anchors.horizontalCenter: parent.horizontalCenter
+                colorOverride: Theme.primary
             }
 
             StyledText {
@@ -292,11 +295,11 @@ PluginComponent {
             id: horizontalPillRow
             spacing: Theme.spacingXS
 
-            DankIcon {
-                name: "group"
-                color: Theme.widgetIconColor || Theme.primary
-                size: root.iconSize
+            DankSVGIcon {
+                source: Qt.resolvedUrl("assets/Steam_icon_logo.svg")
+                size: Theme.iconSize - 7
                 anchors.verticalCenter: parent.verticalCenter
+                colorOverride: Theme.primary
             }
 
             StyledText {
@@ -342,25 +345,20 @@ PluginComponent {
                         border.width: 1
                         border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
 
-                        // Left: Logo + Title
+                        // Left: Profile Picture / Logo + Title
                         Row {
                             anchors.left: parent.left
                             anchors.leftMargin: Theme.spacingM
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: Theme.spacingM
 
-                            Rectangle {
+                            DankCircularImage {
                                 width: 42
                                 height: 42
-                                radius: 21
                                 anchors.verticalCenter: parent.verticalCenter
-                                color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.2)
-                                DankIcon {
-                                    name: "group"
-                                    size: 22
-                                    color: Theme.primary
-                                    anchors.centerIn: parent
-                                }
+                                imageSource: root.userAvatarUrl || ""
+                                fallbackIcon: "group"
+                                cacheImages: true
                             }
 
                             Column {
