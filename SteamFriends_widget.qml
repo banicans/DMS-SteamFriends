@@ -34,6 +34,12 @@ PluginComponent {
     property string timeFormat: PluginService.loadPluginData("steamfriends", "timeFormat", "system")
     property bool showLastOnline: PluginService.loadPluginData("steamfriends", "showLastOnline", true)
 
+    // Saved Sort Preferences
+    property int sortOrder: PluginService.loadPluginData("steamfriends", "sortOrder", 1)
+    property bool alphaSortAscending: PluginService.loadPluginData("steamfriends", "alphaSortAscending", true)
+    property bool statusSortAscending: PluginService.loadPluginData("steamfriends", "statusSortAscending", true)
+    readonly property bool effectiveSortAscending: root.sortOrder === 0 ? root.alphaSortAscending : root.statusSortAscending
+
     // Reactivity
     PluginGlobalVar { varName: "apikey"; onValueChanged: { root.apiKey = value; root.refreshFetcher() } }
     PluginGlobalVar { varName: "steamid"; onValueChanged: { root.steamId = value; root.refreshFetcher() } }
@@ -42,6 +48,9 @@ PluginComponent {
     PluginGlobalVar { varName: "groupOnlineOffline"; onValueChanged: { root.groupOnlineOffline = value; root.updateSortedList() } }
     PluginGlobalVar { varName: "timeFormat"; onValueChanged: { root.timeFormat = value; root.updateSortedList() } }
     PluginGlobalVar { varName: "showLastOnline"; onValueChanged: { root.showLastOnline = value; root.updateSortedList() } }
+    PluginGlobalVar { varName: "sortOrder"; onValueChanged: { root.sortOrder = value; root.updateSortedList() } }
+    PluginGlobalVar { varName: "alphaSortAscending"; onValueChanged: { root.alphaSortAscending = value; root.updateSortedList() } }
+    PluginGlobalVar { varName: "statusSortAscending"; onValueChanged: { root.statusSortAscending = value; root.updateSortedList() } }
 
     onPluginDataChanged: {
         if (!pluginData) return;
@@ -52,13 +61,11 @@ PluginComponent {
         root.groupOnlineOffline = PluginService.loadPluginData("steamfriends", "groupOnlineOffline", false);
         root.timeFormat = PluginService.loadPluginData("steamfriends", "timeFormat", "system");
         root.showLastOnline = PluginService.loadPluginData("steamfriends", "showLastOnline", true);
+        root.sortOrder = PluginService.loadPluginData("steamfriends", "sortOrder", 1);
+        root.alphaSortAscending = PluginService.loadPluginData("steamfriends", "alphaSortAscending", true);
+        root.statusSortAscending = PluginService.loadPluginData("steamfriends", "statusSortAscending", true);
         root.updateSortedList();
     }
-
-    property int sortOrder: 1 // 0 = alphabetical, 1 = status
-    property bool alphaSortAscending: true // Independent direction for Alphabetical sort
-    property bool statusSortAscending: true // Independent direction for Status sort
-    readonly property bool effectiveSortAscending: root.sortOrder === 0 ? root.alphaSortAscending : root.statusSortAscending
 
     property bool sortDropdownVisible: false
     property string toastText: ""
@@ -79,14 +86,31 @@ PluginComponent {
         onTriggered: root.isRefreshing = false
     }
 
+    function getEffectiveTimeFormat() {
+        if (root.timeFormat === "12h") return "12h";
+        if (root.timeFormat === "24h") return "24h";
+        
+        // System Default mode: check DMS global clock settings, fallback to locale
+        let dmsClock24 = PluginService.loadPluginData("dankbar", "use24HourClock", undefined);
+        if (dmsClock24 === undefined) {
+            dmsClock24 = PluginService.loadPluginData("settings", "use24Hour", undefined);
+        }
+        if (dmsClock24 !== undefined) {
+            return dmsClock24 ? "24h" : "12h";
+        }
+        
+        let sysFmt = Qt.locale().timeFormat(Locale.ShortFormat);
+        let is24 = sysFmt.indexOf("H") !== -1 || sysFmt.indexOf("k") !== -1;
+        return is24 ? "24h" : "12h";
+    }
+
     function formatHeaderTime(dateObj) {
         if (!dateObj) return "";
-        if (root.timeFormat === "12h") {
-            return Qt.formatTime(dateObj, "h:mm AP");
-        } else if (root.timeFormat === "24h") {
+        let effFormat = getEffectiveTimeFormat();
+        if (effFormat === "24h") {
             return Qt.formatTime(dateObj, "HH:mm");
         } else {
-            return Qt.formatTime(dateObj, Qt.DefaultLocaleShortDayName);
+            return Qt.formatTime(dateObj, "h:mm AP");
         }
     }
 
@@ -107,14 +131,8 @@ PluginComponent {
             return "Last online " + days + (days === 1 ? " day ago" : " days ago");
         } else {
             let dateObj = new Date(lastlogoff * 1000);
-            let timeStr = "";
-            if (root.timeFormat === "12h") {
-                timeStr = Qt.formatDateTime(dateObj, "MMM d, h:mm AP");
-            } else if (root.timeFormat === "24h") {
-                timeStr = Qt.formatDateTime(dateObj, "MMM d, HH:mm");
-            } else {
-                timeStr = Qt.formatDateTime(dateObj, "MMM d");
-            }
+            let effFormat = getEffectiveTimeFormat();
+            let timeStr = (effFormat === "24h") ? Qt.formatDateTime(dateObj, "MMM d, HH:mm") : Qt.formatDateTime(dateObj, "MMM d, h:mm AP");
             return "Last online " + timeStr;
         }
     }
@@ -629,6 +647,8 @@ PluginComponent {
                                                 onPressed: (m) => sortModeRip.trigger(m.x, m.y)
                                                 onClicked: {
                                                     root.sortOrder = modelData.mode;
+                                                    PluginService.savePluginData("steamfriends", "sortOrder", root.sortOrder);
+                                                    PluginService.setGlobalVar("steamfriends", "sortOrder", root.sortOrder);
                                                     root.updateSortedList();
                                                     root.showToast("Sorted by " + modelData.title);
                                                 }
@@ -781,8 +801,12 @@ PluginComponent {
                                                 onClicked: {
                                                     if (root.sortOrder === 0) {
                                                         root.alphaSortAscending = modelData.dir;
+                                                        PluginService.savePluginData("steamfriends", "alphaSortAscending", root.alphaSortAscending);
+                                                        PluginService.setGlobalVar("steamfriends", "alphaSortAscending", root.alphaSortAscending);
                                                     } else {
                                                         root.statusSortAscending = modelData.dir;
+                                                        PluginService.savePluginData("steamfriends", "statusSortAscending", root.statusSortAscending);
+                                                        PluginService.setGlobalVar("steamfriends", "statusSortAscending", root.statusSortAscending);
                                                     }
                                                     root.updateSortedList();
                                                     root.showToast("Direction set to " + modelData.title);
