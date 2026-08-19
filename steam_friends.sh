@@ -56,13 +56,14 @@ fi
 if command -v jq &> /dev/null; then
     echo "$SUMMARIES" | jq -c '{
         friendCount: [.response.players[] | select(.personastate > 0)] | length,
-        friends: [.response.players[] | select(.personastate > 0) | {
+        friends: [.response.players[] | {
             name: .personaname,
             steamid: .steamid,
-            status: (if .gameextrainfo then "Playing" elif .personastate == 1 then "Online" elif .personastate == 2 then "Busy" elif .personastate == 3 then "Away" elif .personastate == 4 then "Snooze" elif .personastate == 5 then "Looking to Trade" elif .personastate == 6 then "Looking to Play" else "Unknown" end),
+            status: (if .gameextrainfo then "Playing" elif .personastate == 1 then "Online" elif .personastate == 2 then "Busy" elif .personastate == 3 then "Away" elif .personastate == 4 then "Snooze" elif .personastate == 5 then "Looking to Trade" elif .personastate == 6 then "Looking to Play" elif .personastate == 0 then "Offline" else "Offline" end),
             game: (.gameextrainfo // ""),
             gameid: (.gameid // ""),
-            avatarUrl: (.avatarmedium // "")
+            avatarUrl: (.avatarmedium // ""),
+            lastlogoff: (.lastlogoff // 0)
         }]
     }'
 else
@@ -70,3 +71,4 @@ else
     ONLINE_COUNT=$(echo "$SUMMARIES" | grep -o '"personastate":[^,]*' | grep -cE '"personastate":[123456789]' || echo 0)
     echo "{\"friendCount\":$ONLINE_COUNT,\"friends\":[]}"
 fi
+
