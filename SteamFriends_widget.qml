@@ -1,6 +1,8 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import QtQuick.Shapes
+import Qt5Compat.GraphicalEffects
 import Quickshell
 import Quickshell.Io
 import qs.Common
@@ -9,92 +11,228 @@ import qs.Widgets
 import qs.Modules.Plugins
 
 PluginComponent {
-
     id: root
 
-    // This variable stores the count and friend list
+    popoutWidth: 420
+
+    // Count and raw friend list
     property string friendCount: "0"
-
-    // This variable stores the raw friend list from the script, it will be sorted and stored in sortedFriendsList
+    property string userAvatarUrl: ""
     property var friendsList: []
-    
-    // This variable stores the sorted friend list that is used for display, it is updated whenever friendsList changes or when the sort order changes
     property var sortedFriendsList: []
-
-    // This variable stores the last error reported by the fetch script, empty string means no error
+    property var friendGroups: [] // Grouped lists for separate containers
     property string errorMessage: ""
-
-    // This variable stores the timestamp of the last successful friend list fetch, null means never
     property var lastUpdated: null
+    property bool isRefreshing: false
 
-    // This variable stores the current sorting order, it can be toggled by the user, and it will determine how the friend list is sorted (0 = alphabetical, 1 = status)
     property string scriptPath: Qt.resolvedUrl("steam_friends.sh").toString().replace("file://", "")
     
-    // Load API key from saved settings
-    property string apiKey: pluginService ? pluginService.loadPluginData("steamfriends", "apikey", ""): ""
-    property string steamId: pluginService ? pluginService.loadPluginData("steamfriends", "steamid", "") : ""
+    // Load settings with fallback
+    property string apiKey: PluginService.loadPluginData("steamfriends", "apikey", "")
+    property string steamId: PluginService.loadPluginData("steamfriends", "steamid", "")
+    property bool showFriendsOnlineText: PluginService.loadPluginData("steamfriends", "showFriendsOnlineText", true)
+    property bool onlyShowOnline: PluginService.loadPluginData("steamfriends", "onlyShowOnline", false)
+    property bool groupOnlineOffline: PluginService.loadPluginData("steamfriends", "groupOnlineOffline", false)
+    property string timeFormat: PluginService.loadPluginData("steamfriends", "timeFormat", "system")
+    property bool showLastOnline: PluginService.loadPluginData("steamfriends", "showLastOnline", true)
 
-    // Whether the horizontal bar pill shows "X Friends Online" or just the count
-    property bool showFriendsOnlineText: pluginService ? pluginService.loadPluginData("steamfriends", "showFriendsOnlineText", true) : true
+    // Saved Sort Preferences
+    property int sortOrder: PluginService.loadPluginData("steamfriends", "sortOrder", 1)
+    property bool alphaSortAscending: PluginService.loadPluginData("steamfriends", "alphaSortAscending", true)
+    property bool statusSortAscending: PluginService.loadPluginData("steamfriends", "statusSortAscending", true)
+    readonly property bool effectiveSortAscending: root.sortOrder === 0 ? root.alphaSortAscending : root.statusSortAscending
 
-    // React when settings change
-    Connections {
-        target: pluginService
-        function onPluginDataChanged(changedPluginId, changedKey) {
-            if (changedPluginId === "steamfriends" && (changedKey === "apikey" || changedKey === "steamid")) {
-                apiKey = pluginService.loadPluginData("steamfriends", "apikey", "")
-                steamId = pluginService.loadPluginData("steamfriends", "steamid", "")
-                console.log("(SF) STEAM ID updated:", steamId) //Debug log to verify the STEAM ID is being updated
-            }
-            if (changedPluginId === "steamfriends" && changedKey === "showFriendsOnlineText") {
-                showFriendsOnlineText = pluginService.loadPluginData("steamfriends", "showFriendsOnlineText", true)
-            }
+    // Reactivity
+    PluginGlobalVar { varName: "apikey"; onValueChanged: { root.apiKey = value; root.refreshFetcher() } }
+    PluginGlobalVar { varName: "steamid"; onValueChanged: { root.steamId = value; root.refreshFetcher() } }
+    PluginGlobalVar { varName: "showFriendsOnlineText"; onValueChanged: { root.showFriendsOnlineText = value } }
+    PluginGlobalVar { varName: "onlyShowOnline"; onValueChanged: { root.onlyShowOnline = value; root.updateSortedList() } }
+    PluginGlobalVar { varName: "groupOnlineOffline"; onValueChanged: { root.groupOnlineOffline = value; root.updateSortedList() } }
+    PluginGlobalVar { varName: "timeFormat"; onValueChanged: { root.timeFormat = value; root.updateSortedList() } }
+    PluginGlobalVar { varName: "showLastOnline"; onValueChanged: { root.showLastOnline = value; root.updateSortedList() } }
+    PluginGlobalVar { varName: "sortOrder"; onValueChanged: { root.sortOrder = value; root.updateSortedList() } }
+    PluginGlobalVar { varName: "alphaSortAscending"; onValueChanged: { root.alphaSortAscending = value; root.updateSortedList() } }
+    PluginGlobalVar { varName: "statusSortAscending"; onValueChanged: { root.statusSortAscending = value; root.updateSortedList() } }
+
+    onPluginDataChanged: {
+        if (!pluginData) return;
+        root.apiKey = PluginService.loadPluginData("steamfriends", "apikey", "");
+        root.steamId = PluginService.loadPluginData("steamfriends", "steamid", "");
+        root.showFriendsOnlineText = PluginService.loadPluginData("steamfriends", "showFriendsOnlineText", true);
+        root.onlyShowOnline = PluginService.loadPluginData("steamfriends", "onlyShowOnline", false);
+        root.groupOnlineOffline = PluginService.loadPluginData("steamfriends", "groupOnlineOffline", false);
+        root.timeFormat = PluginService.loadPluginData("steamfriends", "timeFormat", "system");
+        root.showLastOnline = PluginService.loadPluginData("steamfriends", "showLastOnline", true);
+        root.sortOrder = PluginService.loadPluginData("steamfriends", "sortOrder", 1);
+        root.alphaSortAscending = PluginService.loadPluginData("steamfriends", "alphaSortAscending", true);
+        root.statusSortAscending = PluginService.loadPluginData("steamfriends", "statusSortAscending", true);
+        root.updateSortedList();
+    }
+
+    property bool sortDropdownVisible: false
+    property string toastText: ""
+
+    function showToast(msg) {
+        toastText = msg;
+        toastTimer.restart();
+    }
+
+    Timer {
+        id: toastTimer
+        interval: 1800
+    }
+
+    Timer {
+        id: refreshSpinTimer
+        interval: 1000
+        onTriggered: root.isRefreshing = false
+    }
+
+    function getEffectiveTimeFormat() {
+        if (root.timeFormat === "12h") return "12h";
+        if (root.timeFormat === "24h") return "24h";
+        
+        // System Default mode: check DMS global clock settings, fallback to locale
+        let dmsClock24 = PluginService.loadPluginData("dankbar", "use24HourClock", undefined);
+        if (dmsClock24 === undefined) {
+            dmsClock24 = PluginService.loadPluginData("settings", "use24Hour", undefined);
+        }
+        if (dmsClock24 !== undefined) {
+            return dmsClock24 ? "24h" : "12h";
+        }
+        
+        let sysFmt = Qt.locale().timeFormat(Locale.ShortFormat);
+        let is24 = sysFmt.indexOf("H") !== -1 || sysFmt.indexOf("k") !== -1;
+        return is24 ? "24h" : "12h";
+    }
+
+    function formatHeaderTime(dateObj) {
+        if (!dateObj) return "";
+        let effFormat = getEffectiveTimeFormat();
+        if (effFormat === "24h") {
+            return Qt.formatTime(dateObj, "HH:mm");
+        } else {
+            return Qt.formatTime(dateObj, "h:mm AP");
         }
     }
 
-    // This variable determines the sorting order of the friend list, it can be toggled by the user, and it will determine how the friend list is sorted (0 = alphabetical, 1 = status)
-    property int sortOrder: 1 // 0 = alphabetical, 1 = status
+    function formatLastOnline(lastlogoff) {
+        if (!lastlogoff || lastlogoff <= 0) return "Offline";
+        let now = Math.floor(Date.now() / 1000);
+        let diff = now - lastlogoff;
+        if (diff < 60) {
+            return "Last online just now";
+        } else if (diff < 3600) {
+            let mins = Math.floor(diff / 60);
+            return "Last online " + mins + (mins === 1 ? " min ago" : " mins ago");
+        } else if (diff < 86400) {
+            let hours = Math.floor(diff / 3600);
+            return "Last online " + hours + (hours === 1 ? " hour ago" : " hours ago");
+        } else if (diff < 604800) {
+            let days = Math.floor(diff / 86400);
+            return "Last online " + days + (days === 1 ? " day ago" : " days ago");
+        } else {
+            let dateObj = new Date(lastlogoff * 1000);
+            let effFormat = getEffectiveTimeFormat();
+            let timeStr = (effFormat === "24h") ? Qt.formatDateTime(dateObj, "MMM d, HH:mm") : Qt.formatDateTime(dateObj, "MMM d, h:mm AP");
+            return "Last online " + timeStr;
+        }
+    }
+
+    function refreshFetcher() {
+        root.isRefreshing = true;
+        refreshSpinTimer.restart();
+        friendFetcher.running = false;
+        friendFetcher.running = Qt.binding(function() { return root.apiKey !== "" && root.steamId !== ""; });
+        root.showToast("Refreshed Friends List");
+    }
     
     function updateSortedList() {
-        let sorted = JSON.parse(JSON.stringify(root.friendsList))
+        let raw = JSON.parse(JSON.stringify(root.friendsList || []));
         
-        if (root.sortOrder === 0) {
-            // Sort alphabetically by name
-            sorted.sort((a, b) => a.name.localeCompare(b.name))
-        } else {
-            // Sort by status (Playing first, then Online, then Away)
-            const statusOrder = {"Playing": 0, "Online": 1, "Away": 2}
-            sorted.sort((a, b) => {
-                let aOrder = statusOrder[a.status] ?? 999
-                let bOrder = statusOrder[b.status] ?? 999
-                if (aOrder !== bOrder) return aOrder - bOrder
-                // Group friends playing the same game together
-                if (a.status === "Playing" && b.status === "Playing") {
-                    let gameOrder = (a.game || "").localeCompare(b.game || "")
-                    if (gameOrder !== 0) return gameOrder
-                }
-                return a.name.localeCompare(b.name)
-            })
-        }
-        
-        root.sortedFriendsList = sorted
-    }
+        raw.forEach(f => {
+            f.statusGroup = f.status === "Offline" ? "Offline Friends" : "Online Friends";
+        });
 
-    // Looks up the Steam appid for a game section header, so its capsule icon can be shown
-    function gameIdForSection(sectionName) {
-        for (let i = 0; i < root.sortedFriendsList.length; i++) {
-            if (root.sortedFriendsList[i].game === sectionName) {
-                return root.sortedFriendsList[i].gameid || ""
-            }
+        let filtered = raw;
+        if (root.onlyShowOnline) {
+            filtered = raw.filter(f => f.status !== "Offline");
         }
-        return ""
+
+        let isAsc = root.effectiveSortAscending;
+        
+        filtered.sort((a, b) => {
+            if (root.groupOnlineOffline && a.statusGroup !== b.statusGroup) {
+                return a.statusGroup === "Online Friends" ? -1 : 1;
+            }
+
+            if (root.sortOrder === 0) {
+                return isAsc ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+            } else {
+                const statusOrder = {
+                    "Playing": 0,
+                    "Online": 1,
+                    "Away": 2,
+                    "Busy": 3,
+                    "Snooze": 4,
+                    "Looking to Play": 5,
+                    "Looking to Trade": 6,
+                    "Offline": 7
+                };
+                let aOrder = statusOrder[a.status] ?? 999;
+                let bOrder = statusOrder[b.status] ?? 999;
+                if (aOrder !== bOrder) {
+                    return isAsc ? (aOrder - bOrder) : (bOrder - aOrder);
+                }
+                if (a.status === "Playing" && b.status === "Playing") {
+                    let gameOrder = (a.game || "").localeCompare(b.game || "");
+                    if (gameOrder !== 0) return isAsc ? gameOrder : -gameOrder;
+                }
+                return isAsc ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+            }
+        });
+        
+        root.sortedFriendsList = filtered;
+
+        // Build separate group models for distinct visual containers
+        let groupsMap = [];
+        if (root.groupOnlineOffline) {
+            let onlineList = filtered.filter(f => f.statusGroup === "Online Friends");
+            let offlineList = filtered.filter(f => f.statusGroup === "Offline Friends");
+            
+            // Always show Online Friends group
+            groupsMap.push({ title: "Online Friends", icon: "person", items: onlineList, gameid: "", emptyMsg: "No friends online", emptyIcon: "group_off" });
+            
+            // Always show Offline Friends group (unless setting onlyShowOnline is active)
+            if (!root.onlyShowOnline) {
+                groupsMap.push({ title: "Offline Friends", icon: "person_off", items: offlineList, gameid: "", emptyMsg: "No friends offline", emptyIcon: "person_off" });
+            }
+        } else if (root.sortOrder === 1) {
+            let map = {};
+            let orderKeys = [];
+            filtered.forEach(f => {
+                let key = f.game && f.game.length > 0 ? f.game : "Friends";
+                if (!map[key]) {
+                    map[key] = { title: key, icon: f.game ? "sports_esports" : "person", items: [], gameid: f.gameid || "", emptyMsg: "", emptyIcon: "group_off" };
+                    orderKeys.push(key);
+                }
+                map[key].items.push(f);
+            });
+            orderKeys.forEach(k => groupsMap.push(map[k]));
+        } else {
+            groupsMap.push({ title: "", icon: "", items: filtered, gameid: "", emptyMsg: "", emptyIcon: "" });
+        }
+
+        root.friendGroups = [];
+        root.friendGroups = groupsMap;
     }
 
     onFriendsListChanged: updateSortedList()
+    onSortOrderChanged: updateSortedList()
+    onAlphaSortAscendingChanged: updateSortedList()
+    onStatusSortAscendingChanged: updateSortedList()
 
-    // Process --------------------------------------------------------------------------------
-    // This process runs the steam_friends.sh script to fetch the friend list and count, it expects a JSON output with 
-    // the format: {"friendCount": 5, "friends": [{"name": "Friend1", "status": "Playing", "game": "Game1"}, {"name": "Friend2", "status": "Online", "game": ""}]}
+    // Steam Friends Fetcher Process
     Process {
         id: friendFetcher
         command: ["sh", root.scriptPath, root.apiKey, root.steamId, "json"]
@@ -102,62 +240,44 @@ PluginComponent {
 
         stdout: SplitParser {
             onRead: data => {
-                let output = data.trim()
-                console.log("")
-                console.log("-----------------------------------------------------------------------")
-                console.log("(SF) Steam Friends now running...")
-                console.log("(SF) STEAMID:", steamId)
-                
+                let output = data.trim();
                 try {
-                    let json = JSON.parse(output)
+                    let json = JSON.parse(output);
                     if (json.error) {
-                        root.errorMessage = json.error
-                        console.error("(SF) Script reported error:", json.error)
+                        root.errorMessage = json.error;
                     } else {
-                        root.errorMessage = ""
-                        root.friendCount = json.friendCount.toString()
-                        root.friendsList = json.friends || []
-                        root.updateSortedList()
-                        root.lastUpdated = new Date()
-                        console.log("(SF) Parsed count:", root.friendCount)
-                        console.log("(SF) Parsed friends:", root.friendsList.length)
+                        root.errorMessage = "";
+                        root.friendCount = json.friendCount ? json.friendCount.toString() : "0";
+                        root.userAvatarUrl = json.userAvatarUrl || "";
+                        root.friendsList = json.friends || [];
+                        root.updateSortedList();
+                        root.lastUpdated = new Date();
                     }
                 } catch (e) {
-                    root.errorMessage = "Failed to parse Steam response"
-                    console.error("(SF) Error parsing JSON:", e)
-                    console.log("(SF) Output was:", output)
+                    root.errorMessage = "Failed to parse Steam response";
                 }
-                console.log("")
-                console.log("(SF):   ", output)
-                console.log("-----------------------------------------------------------------------")
             }
         }
     }
 
-    // Timer --------------------------------------------------------------------------------
-    // This timer will refresh the friend list every 5 minutes by restarting the process
     Timer {
         interval: 300000 
         running: true
         repeat: true
-        onTriggered: {
-            friendFetcher.running = false
-            friendFetcher.running = Qt.binding(function() { return root.apiKey !== "" && root.steamId !== "" })
-        }
+        onTriggered: root.refreshFetcher()
     }
 
-    // V Pill -------------------------------------------------------------------------------
-    // Vertical pill content - This is the content that appears in the vertical bar, it will
+    // Vertical Bar Pill
     verticalBarPill: Component {
         Column {
             id: verticalPillColumn
             spacing: Theme.spacingS
 
-            DankIcon {
-                name: "contacts"
-                color: Theme.primary
+            DankSVGIcon {
+                source: Qt.resolvedUrl("assets/Steam_icon_logo.svg")
                 size: root.iconSize
                 anchors.horizontalCenter: parent.horizontalCenter
+                colorOverride: Theme.primary
             }
 
             StyledText {
@@ -169,18 +289,17 @@ PluginComponent {
         }
     }
 
-    // H Pill -------------------------------------------------------------------------------
-    // Horizontal pill content - This is the content that appears in the horizontal bar, it will show the number of friends online and an icon
+    // Horizontal Bar Pill
     horizontalBarPill: Component {
         Row {
             id: horizontalPillRow
             spacing: Theme.spacingXS
 
-            DankIcon {
-                name: "group"
-                color: Theme.primary
-                size: root.iconSize
+            DankSVGIcon {
+                source: Qt.resolvedUrl("assets/Steam_icon_logo.svg")
+                size: Theme.iconSize - 7
                 anchors.verticalCenter: parent.verticalCenter
+                colorOverride: Theme.primary
             }
 
             StyledText {
@@ -192,236 +311,895 @@ PluginComponent {
         }
     }
 
-    // Row -------------------------------------------------------------------------------
-    // This is the popout content that appears when you click the pill, it will show a list of friends with their status and game if they are playing something
+    // Popout Content
     popoutContent: Component {
         PopoutComponent {
             id: popoutColumn
-            headerText: root.friendCount + " Friends Online"
-            showCloseButton: true
+            headerText: ""
+            showCloseButton: false
+
+            Component.onCompleted: root.sortDropdownVisible = false
+            Component.onDestruction: root.sortDropdownVisible = false
 
             Item {
-                id: sortRow
+                id: popoutWrapper
                 width: parent.width
-                height: buttonRow.implicitHeight + Theme.spacingM * 2
+                height: mainCol.implicitHeight
 
-                Row {
-                    id: buttonRow
-                    anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingM
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Theme.spacingS
+                Component.onCompleted: root.sortDropdownVisible = false
+                Component.onDestruction: root.sortDropdownVisible = false
 
-                    // Sort button - icon-only, toggles the sorting order between alphabetical and status
-                    DankActionButton {
-                        iconName: "Sort"
-                        iconSize: Theme.iconSizeSmall
-                        iconColor: Theme.surfaceVariantText
-                        tooltipText: "Sort: " + (root.sortOrder === 0 ? "Alphabetical" : "Status")
-                        onClicked: {
-                            root.sortOrder = (root.sortOrder + 1) % 2
-                            root.updateSortedList()
+                Column {
+                    id: mainCol
+                    width: parent.width
+                    spacing: Theme.spacingM
+                    topPadding: 0
+                    bottomPadding: 2
+
+                    // Header Card
+                    StyledRect {
+                        width: parent.width
+                        height: 72
+                        radius: Theme.cornerRadius * 1.5
+                        color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
+                        border.width: 1
+                        border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
+
+                        // Left: Profile Picture / Logo + Title
+                        Row {
+                            anchors.left: parent.left
+                            anchors.leftMargin: Theme.spacingM
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: Theme.spacingM
+
+                            DankCircularImage {
+                                width: 42
+                                height: 42
+                                anchors.verticalCenter: parent.verticalCenter
+                                imageSource: root.userAvatarUrl || ""
+                                fallbackIcon: "group"
+                                cacheImages: true
+                            }
+
+                            Column {
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 2
+
+                                StyledText {
+                                    text: "Steam Friends"
+                                    font.bold: true
+                                    font.pixelSize: Theme.fontSizeLarge
+                                    color: Theme.surfaceText
+                                }
+
+                                StyledText {
+                                    text: root.lastUpdated ? (root.friendCount + " Friends Online • Updated " + root.formatHeaderTime(root.lastUpdated)) : (root.friendCount + " Friends Online")
+                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    color: Theme.primary
+                                    opacity: 0.8
+                                }
+                            }
+                        }
+
+                        // Right: Grouped Single-Icon Action Buttons
+                        Row {
+                            anchors.right: parent.right
+                            anchors.rightMargin: Theme.spacingM
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 1
+
+                            // Sort Button
+                            Rectangle {
+                                id: headerSortBtn
+                                property bool isHovered: sortMa.containsMouse
+                                property bool isActive: root.sortDropdownVisible
+
+                                width: 38
+                                height: 38
+
+                                color: isActive ? Theme.withAlpha(Theme.secondary, 0.2) : (isHovered ? Theme.withAlpha(Theme.secondary, 0.12) : Theme.withAlpha(Theme.surfaceContainer, 0.4))
+                                border.width: 1
+                                border.color: Theme.withAlpha(Theme.secondary, isActive || isHovered ? 0.4 : 0.15)
+
+                                topLeftRadius: isHovered || isActive ? (height / 2) : Theme.cornerRadius
+                                bottomLeftRadius: isHovered || isActive ? (height / 2) : Theme.cornerRadius
+                                topRightRadius: isHovered || isActive ? (height / 2) : 4
+                                bottomRightRadius: isHovered || isActive ? (height / 2) : 4
+
+                                Behavior on topLeftRadius { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                Behavior on bottomLeftRadius { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                Behavior on topRightRadius { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                Behavior on bottomRightRadius { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                Behavior on color { ColorAnimation { duration: 150 } }
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                                scale: sortMa.pressed ? 0.92 : (isHovered ? 1.05 : 1.0)
+                                Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
+
+                                DankRipple { id: sortRip; anchors.fill: parent; cornerRadius: parent.topLeftRadius; rippleColor: Theme.secondary }
+
+                                DankIcon {
+                                    id: sortIcon
+                                    name: root.sortOrder === 1 ? "leaderboard" : "sort_by_alpha"
+                                    size: 20
+                                    color: Theme.secondary
+                                    anchors.centerIn: parent
+                                    rotation: root.sortOrder === 1 ? 0 : 360
+                                    Behavior on rotation { NumberAnimation { duration: 350; easing.type: Easing.OutBack } }
+                                }
+
+                                MouseArea {
+                                    id: sortMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onPressed: (m) => sortRip.trigger(m.x, m.y)
+                                    onClicked: root.sortDropdownVisible = !root.sortDropdownVisible
+                                }
+                            }
+
+                            // Refresh Button
+                            Rectangle {
+                                id: headerRefreshBtn
+                                property bool isHovered: refreshMa.containsMouse
+
+                                width: 38
+                                height: 38
+
+                                color: isHovered ? Theme.withAlpha(Theme.primary, 0.15) : Theme.withAlpha(Theme.surfaceContainer, 0.4)
+                                border.width: 1
+                                border.color: Theme.withAlpha(Theme.primary, isHovered ? 0.3 : 0.15)
+
+                                topLeftRadius: isHovered || root.isRefreshing ? (height / 2) : 4
+                                bottomLeftRadius: isHovered || root.isRefreshing ? (height / 2) : 4
+                                topRightRadius: isHovered || root.isRefreshing ? (height / 2) : Theme.cornerRadius
+                                bottomRightRadius: isHovered || root.isRefreshing ? (height / 2) : Theme.cornerRadius
+
+                                Behavior on topLeftRadius { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                Behavior on bottomLeftRadius { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                Behavior on topRightRadius { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                Behavior on bottomRightRadius { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                Behavior on color { ColorAnimation { duration: 150 } }
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                                scale: refreshMa.pressed ? 0.92 : (isHovered ? 1.05 : 1.0)
+                                Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
+
+                                DankRipple { id: refreshRip; anchors.fill: parent; cornerRadius: parent.topRightRadius; rippleColor: Theme.primary }
+
+                                DankSpinner {
+                                    size: 20
+                                    color: Theme.primary
+                                    anchors.centerIn: parent
+                                    visible: root.isRefreshing
+                                }
+
+                                DankIcon {
+                                    id: refreshBtnIcon
+                                    name: "refresh"
+                                    size: 20
+                                    color: Theme.primary
+                                    anchors.centerIn: parent
+                                    visible: !root.isRefreshing
+
+                                    rotation: refreshMa.containsMouse ? 180 : 0
+                                    Behavior on rotation { NumberAnimation { duration: 250; easing.type: Easing.OutBack } }
+                                }
+
+                                MouseArea {
+                                    id: refreshMa
+                                    anchors.fill: parent
+                                    hoverEnabled: !root.isRefreshing
+                                    cursorShape: Qt.PointingHandCursor
+                                    onPressed: (m) => refreshRip.trigger(m.x, m.y)
+                                    onClicked: root.refreshFetcher()
+                                }
+                            }
                         }
                     }
-                    // Refresh button - icon-only, refreshes the friend list by restarting the process
-                    DankActionButton {
-                        iconName: "refresh"
-                        iconSize: Theme.iconSizeSmall
-                        iconColor: Theme.surfaceVariantText
-                        tooltipText: "Refresh"
-                        onClicked: {
-                            friendFetcher.running = false
-                            friendFetcher.running = Qt.binding(function() { return root.apiKey !== "" && root.steamId !== "" })
+
+                    // --- Sort Options: Grouped Pair of Container Cards with Dynamic Morphing Corners ---
+                    Column {
+                        width: parent.width
+                        spacing: 2
+                        visible: root.sortDropdownVisible
+
+                        // Container 1: SORT BY (Top of Grouped Pair)
+                        StyledRect {
+                            width: parent.width
+                            height: Math.max(0, sortByCol.implicitHeight + Theme.spacingM * 2)
+                            color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
+                            border.width: 1
+                            border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
+
+                            topLeftRadius: Theme.cornerRadius * 1.2
+                            topRightRadius: Theme.cornerRadius * 1.2
+                            bottomLeftRadius: 4
+                            bottomRightRadius: 4
+
+                            Column {
+                                id: sortByCol
+                                width: parent.width
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: Theme.spacingM
+                                spacing: Theme.spacingS
+
+                                RowLayout {
+                                    spacing: Theme.spacingXS
+                                    DankIcon { name: "tune"; size: 14; color: Theme.surfaceText; Layout.alignment: Qt.AlignVCenter }
+                                    StyledText {
+                                        text: "Sort By"
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.weight: Font.Bold
+                                        color: Theme.surfaceText
+                                        Layout.fillWidth: true
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                }
+
+                                Column {
+                                    width: parent.width
+                                    spacing: 2
+
+                                    Repeater {
+                                        model: [
+                                            { title: "Status & Game", icon: "leaderboard", mode: 1 },
+                                            { title: "Alphabetical", icon: "sort_by_alpha", mode: 0 }
+                                        ]
+
+                                        delegate: Item {
+                                            id: sortModeItem
+                                            width: parent.width
+                                            height: 42
+
+                                            property bool isSelected: root.sortOrder === modelData.mode
+                                            property bool isHovered: sortModeMa.containsMouse
+
+                                            Shape {
+                                                id: sortModeBg
+                                                anchors.fill: parent
+
+                                                property real innerRadius: 4
+                                                property real outerRadius: Theme.cornerRadius || 12
+                                                property bool isFirst: index === 0
+                                                property bool isLast: index === 1
+
+                                                property real tlr: (isSelected || isHovered) ? (height / 2) : (isFirst ? outerRadius : innerRadius)
+                                                property real trr: (isSelected || isHovered) ? (height / 2) : (isFirst ? outerRadius : innerRadius)
+                                                property real blr: (isSelected || isHovered) ? (height / 2) : (isLast ? outerRadius : innerRadius)
+                                                property real brr: (isSelected || isHovered) ? (height / 2) : (isLast ? outerRadius : innerRadius)
+
+                                                property real tlrAnim: tlr; Behavior on tlrAnim { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                                property real trrAnim: trr; Behavior on trrAnim { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                                property real blrAnim: blr; Behavior on blrAnim { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                                property real brrAnim: brr; Behavior on brrAnim { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+
+                                                property color paintColor: isSelected
+                                                        ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.18)
+                                                        : (isHovered ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.08) : Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.04))
+
+                                                property color paintBorder: isSelected
+                                                        ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.5)
+                                                        : (isHovered ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.3) : Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.12))
+
+                                                ShapePath {
+                                                    fillColor: sortModeBg.paintColor
+                                                    strokeColor: sortModeBg.paintBorder
+                                                    strokeWidth: 1
+
+                                                    startX: sortModeBg.tlrAnim; startY: 0
+                                                    PathLine { x: sortModeBg.width - sortModeBg.trrAnim; y: 0 }
+                                                    PathArc { x: sortModeBg.width; y: sortModeBg.trrAnim; radiusX: sortModeBg.trrAnim; radiusY: sortModeBg.trrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: sortModeBg.width; y: sortModeBg.height - sortModeBg.brrAnim }
+                                                    PathArc { x: sortModeBg.width - sortModeBg.brrAnim; y: sortModeBg.height; radiusX: sortModeBg.brrAnim; radiusY: sortModeBg.brrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: sortModeBg.blrAnim; y: sortModeBg.height }
+                                                    PathArc { x: 0; y: sortModeBg.height - sortModeBg.blrAnim; radiusX: sortModeBg.blrAnim; radiusY: sortModeBg.blrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: 0; y: sortModeBg.tlrAnim }
+                                                    PathArc { x: sortModeBg.tlrAnim; y: 0; radiusX: sortModeBg.tlrAnim; radiusY: sortModeBg.tlrAnim; direction: PathArc.Clockwise }
+                                                }
+                                            }
+
+                                            scale: sortModeMa.pressed ? 0.98 : (isHovered ? 1.01 : 1.0)
+                                            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
+
+                                            DankRipple { id: sortModeRip; anchors.fill: parent; cornerRadius: sortModeBg.tlrAnim; rippleColor: Theme.primary }
+
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.leftMargin: Theme.spacingM
+                                                anchors.rightMargin: Theme.spacingM
+                                                spacing: Theme.spacingM
+
+                                                DankIcon {
+                                                    name: modelData.icon
+                                                    size: 20
+                                                    color: sortModeItem.isSelected ? Theme.primary : Theme.surfaceVariantText
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                }
+
+                                                StyledText {
+                                                    text: modelData.title
+                                                    font.pixelSize: Theme.fontSizeMedium
+                                                    font.weight: sortModeItem.isSelected ? Font.Medium : Font.Normal
+                                                    color: Theme.surfaceText
+                                                    Layout.fillWidth: true
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                }
+
+                                                DankIcon {
+                                                    name: "check"
+                                                    size: 18
+                                                    color: Theme.primary
+                                                    visible: sortModeItem.isSelected
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                }
+                                            }
+
+                                            MouseArea {
+                                                id: sortModeMa
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onPressed: (m) => sortModeRip.trigger(m.x, m.y)
+                                                onClicked: {
+                                                    root.sortOrder = modelData.mode;
+                                                    PluginService.savePluginData("steamfriends", "sortOrder", root.sortOrder);
+                                                    PluginService.setGlobalVar("steamfriends", "sortOrder", root.sortOrder);
+                                                    root.updateSortedList();
+                                                    root.showToast("Sorted by " + modelData.title);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Container 2: SORT DIRECTION (Bottom of Grouped Pair)
+                        StyledRect {
+                            width: parent.width
+                            height: Math.max(0, sortDirCol.implicitHeight + Theme.spacingM * 2)
+                            color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
+                            border.width: 1
+                            border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
+
+                            topLeftRadius: 4
+                            topRightRadius: 4
+                            bottomLeftRadius: Theme.cornerRadius * 1.2
+                            bottomRightRadius: Theme.cornerRadius * 1.2
+
+                            Column {
+                                id: sortDirCol
+                                width: parent.width
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: Theme.spacingM
+                                spacing: Theme.spacingS
+
+                                RowLayout {
+                                    spacing: Theme.spacingXS
+                                    DankIcon { name: "swap_vert"; size: 14; color: Theme.surfaceText; Layout.alignment: Qt.AlignVCenter }
+                                    StyledText {
+                                        text: "Sort Direction"
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.weight: Font.Bold
+                                        color: Theme.surfaceText
+                                        Layout.fillWidth: true
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                }
+
+                                Column {
+                                    width: parent.width
+                                    spacing: 2
+
+                                    Repeater {
+                                        model: [
+                                            { title: "Ascending", icon: "arrow_upward", dir: true },
+                                            { title: "Descending", icon: "arrow_downward", dir: false }
+                                        ]
+
+                                        delegate: Item {
+                                            id: sortDirItem
+                                            width: parent.width
+                                            height: 42
+
+                                            property bool isSelected: root.effectiveSortAscending === modelData.dir
+                                            property bool isHovered: sortDirMa.containsMouse
+
+                                            Shape {
+                                                id: sortDirBg
+                                                anchors.fill: parent
+
+                                                property real innerRadius: 4
+                                                property real outerRadius: Theme.cornerRadius || 12
+                                                property bool isFirst: index === 0
+                                                property bool isLast: index === 1
+
+                                                property real tlr: (isSelected || isHovered) ? (height / 2) : (isFirst ? outerRadius : innerRadius)
+                                                property real trr: (isSelected || isHovered) ? (height / 2) : (isFirst ? outerRadius : innerRadius)
+                                                property real blr: (isSelected || isHovered) ? (height / 2) : (isLast ? outerRadius : innerRadius)
+                                                property real brr: (isSelected || isHovered) ? (height / 2) : (isLast ? outerRadius : innerRadius)
+
+                                                property real tlrAnim: tlr; Behavior on tlrAnim { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                                property real trrAnim: trr; Behavior on trrAnim { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                                property real blrAnim: blr; Behavior on blrAnim { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+                                                property real brrAnim: brr; Behavior on brrAnim { NumberAnimation { duration: 500; easing.type: Easing.OutExpo } }
+
+                                                property color paintColor: isSelected
+                                                        ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.18)
+                                                        : (isHovered ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.08) : Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.04))
+
+                                                property color paintBorder: isSelected
+                                                        ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.5)
+                                                        : (isHovered ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.3) : Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.12))
+
+                                                ShapePath {
+                                                    fillColor: sortDirBg.paintColor
+                                                    strokeColor: sortDirBg.paintBorder
+                                                    strokeWidth: 1
+
+                                                    startX: sortDirBg.tlrAnim; startY: 0
+                                                    PathLine { x: sortDirBg.width - sortDirBg.trrAnim; y: 0 }
+                                                    PathArc { x: sortDirBg.width; y: sortDirBg.trrAnim; radiusX: sortDirBg.trrAnim; radiusY: sortDirBg.trrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: sortDirBg.width; y: sortDirBg.height - sortDirBg.brrAnim }
+                                                    PathArc { x: sortDirBg.width - sortDirBg.brrAnim; y: sortDirBg.height; radiusX: sortDirBg.brrAnim; radiusY: sortDirBg.brrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: sortDirBg.blrAnim; y: sortDirBg.height }
+                                                    PathArc { x: 0; y: sortDirBg.height - sortDirBg.blrAnim; radiusX: sortDirBg.blrAnim; radiusY: sortDirBg.blrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: 0; y: sortDirBg.tlrAnim }
+                                                    PathArc { x: sortDirBg.tlrAnim; y: 0; radiusX: sortDirBg.tlrAnim; radiusY: sortDirBg.tlrAnim; direction: PathArc.Clockwise }
+                                                }
+                                            }
+
+                                            scale: sortDirMa.pressed ? 0.98 : (isHovered ? 1.01 : 1.0)
+                                            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
+
+                                            DankRipple { id: sortDirRip; anchors.fill: parent; cornerRadius: sortDirBg.tlrAnim; rippleColor: Theme.primary }
+
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.leftMargin: Theme.spacingM
+                                                anchors.rightMargin: Theme.spacingM
+                                                spacing: Theme.spacingM
+
+                                                DankIcon {
+                                                    name: modelData.icon
+                                                    size: 20
+                                                    color: sortDirItem.isSelected ? Theme.primary : Theme.surfaceVariantText
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                }
+
+                                                StyledText {
+                                                    text: modelData.title
+                                                    font.pixelSize: Theme.fontSizeMedium
+                                                    font.weight: sortDirItem.isSelected ? Font.Medium : Font.Normal
+                                                    color: Theme.surfaceText
+                                                    Layout.fillWidth: true
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                }
+
+                                                DankIcon {
+                                                    name: "check"
+                                                    size: 18
+                                                    color: Theme.primary
+                                                    visible: sortDirItem.isSelected
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                }
+                                            }
+
+                                            MouseArea {
+                                                id: sortDirMa
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onPressed: (m) => sortDirRip.trigger(m.x, m.y)
+                                                onClicked: {
+                                                    if (root.sortOrder === 0) {
+                                                        root.alphaSortAscending = modelData.dir;
+                                                        PluginService.savePluginData("steamfriends", "alphaSortAscending", root.alphaSortAscending);
+                                                        PluginService.setGlobalVar("steamfriends", "alphaSortAscending", root.alphaSortAscending);
+                                                    } else {
+                                                        root.statusSortAscending = modelData.dir;
+                                                        PluginService.savePluginData("steamfriends", "statusSortAscending", root.statusSortAscending);
+                                                        PluginService.setGlobalVar("steamfriends", "statusSortAscending", root.statusSortAscending);
+                                                    }
+                                                    root.updateSortedList();
+                                                    root.showToast("Direction set to " + modelData.title);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                }
 
-                // Last updated timestamp - shown after the first successful fetch
-                StyledText {
-                    anchors.right: parent.right
-                    anchors.rightMargin: Theme.spacingM
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: root.lastUpdated ? "Updated " + Qt.formatTime(root.lastUpdated, "h:mm AP") : ""
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceText
-                    opacity: 0.7
-                    visible: root.lastUpdated !== null
-                }
-            }
+                    // Error Container (if error present)
+                    StyledRect {
+                        width: parent.width
+                        visible: root.errorMessage.length > 0
+                        height: Math.max(0, errText.implicitHeight + Theme.spacingM * 2)
+                        radius: Theme.cornerRadius
+                        color: Qt.rgba(0.95, 0.26, 0.21, 0.12)
+                        border.width: 1
+                        border.color: Qt.rgba(0.95, 0.26, 0.21, 0.4)
 
-            // Error banner - shown when the last fetch attempt failed
-            StyledText {
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
-                text: root.errorMessage
-                color: "#F44336"
-                visible: root.errorMessage.length > 0
-            }
+                        StyledText {
+                            id: errText
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            verticalAlignment: Text.AlignVCenter
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: root.errorMessage
+                            color: "#F44336"
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+                    }
 
-            Column {
-                width: parent.width
-                spacing: Theme.spacingM
-                padding: Theme.spacingM
+                    // Empty Fallback Container (No friends found at all)
+                    StyledRect {
+                        width: parent.width
+                        height: 72
+                        radius: Theme.cornerRadius
+                        color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
+                        border.width: 1
+                        border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
+                        visible: root.friendsList.length === 0
 
-                // List of friends - This is the box containing the friend entries, it will scroll if there are many friends
-                Rectangle {
-                    width: parent.width - Theme.spacingM * 2
-                    height: Math.min(friendsListView.contentHeight, 400)
-                    
-                    clip: true
-                    color: Theme.surfaceContainer
+                        RowLayout {
+                            anchors.centerIn: parent
+                            spacing: Theme.spacingS
 
-                    DankListView {
-                        id: friendsListView
-                        anchors.fill: parent
-                        spacing: Theme.spacingS
-                        model: root.sortedFriendsList
+                            DankIcon {
+                                name: root.apiKey === "" || root.steamId === "" ? "settings" : "group_off"
+                                size: 20
+                                color: Theme.surfaceVariantText
+                                Layout.alignment: Qt.AlignVCenter
+                            }
 
-                        // Group friends by game when sorted by status (game is "" for non-playing friends, so no header shows for them)
-                        section.property: root.sortOrder === 1 ? "game" : ""
-                        section.criteria: ViewSection.FullString
-                        section.delegate: Component {
-                            Item {
-                                readonly property bool isTrailingBoundary: section.length === 0
-                                    && root.sortedFriendsList.length > 0
-                                    && (root.sortedFriendsList[0].game || "") !== ""
-                                readonly property string gameId: section.length > 0 ? root.gameIdForSection(section) : ""
-                                readonly property string gameIconUrl: gameId !== "" ? ("https://cdn.cloudflare.steamstatic.com/steam/apps/" + gameId + "/capsule_184x69.jpg") : ""
+                            StyledText {
+                                text: root.apiKey === "" || root.steamId === "" ? "Please configure API Key and Steam ID in settings." : "No friends online"
+                                color: Theme.surfaceVariantText
+                                font.pixelSize: Theme.fontSizeMedium
+                                Layout.alignment: Qt.AlignVCenter
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
 
-                                width: friendsListView.width
-                                height: section.length > 0 ? (Math.max(sectionText.implicitHeight, gameIcon.height) + Theme.spacingS)
-                                                            : (isTrailingBoundary ? (1 + Theme.spacingS) : 0)
+                    // Separate Container Cards for Each Group of Friends
+                    Repeater {
+                        model: root.friendGroups
+                        visible: root.friendsList.length > 0
 
-                                Row {
-                                    visible: section.length > 0
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: Theme.spacingXS
-                                    anchors.verticalCenter: parent.verticalCenter
+                        delegate: StyledRect {
+                            id: groupCard
+                            width: parent.width
+                            height: Math.max(0, groupCol.implicitHeight + Theme.spacingM * 2)
+                            radius: Theme.cornerRadius
+                            color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
+                            border.width: 1
+                            border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.15)
+
+                            Column {
+                                id: groupCol
+                                width: parent.width
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: Theme.spacingM
+                                spacing: Theme.spacingS
+
+                                // Section Header Format (Shown ONLY when grouping is active)
+                                RowLayout {
+                                    id: groupHeaderRow
+                                    visible: modelData.title !== undefined && modelData.title.length > 0 && (root.groupOnlineOffline || root.sortOrder === 1)
+                                    width: parent.width
                                     spacing: Theme.spacingXS
 
                                     Image {
-                                        id: gameIcon
                                         width: 43
                                         height: 16
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        visible: gameIconUrl !== ""
-                                        source: gameIconUrl
+                                        Layout.alignment: Qt.AlignVCenter
+                                        visible: modelData.gameid !== undefined && modelData.gameid !== ""
+                                        source: modelData.gameid ? ("https://cdn.cloudflare.steamstatic.com/steam/apps/" + modelData.gameid + "/capsule_184x69.jpg") : ""
                                         asynchronous: true
                                         fillMode: Image.PreserveAspectCrop
                                         cache: true
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: modelData.gameid !== ""
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: Qt.openUrlExternally("https://store.steampowered.com/app/" + modelData.gameid)
+                                        }
                                     }
 
-                                    StyledText {
-                                        id: sectionText
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: section
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        font.bold: true
-                                        color: Theme.primary
-                                    }
-                                }
-
-                                Rectangle {
-                                    visible: isTrailingBoundary
-                                    anchors.centerIn: parent
-                                    width: parent.width
-                                    height: 1
-                                    color: Theme.outline
-                                }
-
-                                // Click a game section header to open its Steam store page
-                                MouseArea {
-                                    anchors.fill: parent
-                                    enabled: gameId !== ""
-                                    cursorShape: gameId !== "" ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: Qt.openUrlExternally("https://store.steampowered.com/app/" + gameId)
-                                }
-                            }
-                        }
-
-                        // This is each friend entry, it will show the friend's name, status, and game if they are playing something
-                        delegate: Rectangle {
-                            width: parent.width
-                            height: friendRow.implicitHeight + Theme.spacingS * 2
-                            color: Theme.surface
-                            radius: Theme.cornerRadius
-                            Row {
-                                id: friendRow
-                                width: parent.width - Theme.spacingM * 2
-                                height: parent.height
-                                anchors.centerIn: parent
-                                spacing: Theme.spacingS
-
-                                // Friend avatar
-                                DankCircularImage {
-                                    width: 36
-                                    height: 36
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    imageSource: modelData.avatarUrl || ""
-                                    fallbackIcon: "person"
-                                    cacheImages: true
-                                }
-
-                                // Status indicator (colored dot)
-                                Rectangle {
-                                    width: 8
-                                    height: 8
-                                    radius: 4
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    color: modelData.status === "Playing" ? Theme.accentColor :
-                                           modelData.status === "Online" ? "#4CAF50" :
-                                           modelData.status === "Away" ? "#FFC107" :
-                                           modelData.status === "Busy" ? "#F44336" :
-                                           modelData.status === "Snooze" ? "#9E9E9E" :
-                                           modelData.status === "Looking to Trade" ? "#26A69A" :
-                                           modelData.status === "Looking to Play" ? "#2196F3" :
-                                           modelData.status === "Offline" ? "#616161" : "#9C27B0"
-                                }
-
-                                // Friend info - This column contains the friend's name and status/game info, it will be to the right of the status indicator
-                                Column {
-                                    spacing: 2
-                                    anchors.verticalCenter: parent.verticalCenter
-
-                                    // Friend name
-                                    StyledText {
-                                        text: modelData.name
-                                        font.pixelSize: Theme.fontSizeXLarge
-                                        color: Theme.primary
-                                    }
-                                    // Status or game info
-                                    StyledText {
-                                        text: modelData.game && modelData.game.length > 0 ? 
-                                              "Playing: " + modelData.game : 
-                                              modelData.status
-                                        font.pixelSize: Theme.fontSizeMedium
+                                    DankIcon {
+                                        name: modelData.icon ? modelData.icon : "person"
+                                        size: 14
                                         color: Theme.surfaceText
-                                        visible: text.length > 0
+                                        Layout.alignment: Qt.AlignVCenter
+                                        visible: !modelData.gameid
+                                    }
+
+                                    StyledText {
+                                        text: modelData.title || ""
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.weight: Font.Bold
+                                        color: Theme.surfaceText
+                                        Layout.fillWidth: true
+                                        Layout.alignment: Qt.AlignVCenter
                                     }
                                 }
-                            }
 
-                            // Click a friend to open a chat with them in Steam
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (modelData.steamid) {
-                                        Qt.openUrlExternally("steam://friends/message/" + modelData.steamid)
+                                // Empty Category Container Pill if 0 items in this group
+                                StyledRect {
+                                    width: parent.width
+                                    height: 44
+                                    radius: Theme.cornerRadius
+                                    color: Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.05)
+                                    border.width: 1
+                                    border.color: Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.12)
+                                    visible: modelData.items.length === 0
+
+                                    RowLayout {
+                                        anchors.centerIn: parent
+                                        spacing: Theme.spacingS
+
+                                        DankIcon {
+                                            name: modelData.emptyIcon ? modelData.emptyIcon : "group_off"
+                                            size: 18
+                                            color: Theme.surfaceVariantText
+                                            Layout.alignment: Qt.AlignVCenter
+                                        }
+
+                                        StyledText {
+                                            text: modelData.emptyMsg || "No friends in this group"
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.weight: Font.Medium
+                                            color: Theme.surfaceVariantText
+                                            Layout.alignment: Qt.AlignVCenter
+                                        }
+                                    }
+                                }
+
+                                // Friend list container (Scrollable if > 3 items)
+                                Item {
+                                    width: parent.width
+                                    height: modelData.items.length > 3 ? (3 * 54 + 2 * 2) : (modelData.items.length * 54 + Math.max(0, modelData.items.length - 1) * 2)
+                                    visible: modelData.items.length > 0
+                                    clip: true
+
+                                    ScrollView {
+                                        id: friendScrollView
+                                        anchors.fill: parent
+                                        contentWidth: availableWidth
+                                        clip: true
+
+                                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                        ScrollBar.vertical: ScrollBar {
+                                            id: customScrollBar
+                                            policy: modelData.items.length > 3 ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                                            active: true
+                                            width: 6
+
+                                            contentItem: Rectangle {
+                                                implicitWidth: 6
+                                                radius: 3
+                                                color: customScrollBar.pressed 
+                                                       ? Theme.primary 
+                                                       : (customScrollBar.hovered 
+                                                          ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.7) 
+                                                          : Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.4))
+                                                Behavior on color { ColorAnimation { duration: 150 } }
+                                            }
+
+                                            background: Rectangle {
+                                                implicitWidth: 6
+                                                color: Qt.rgba(Theme.surfaceContainer.r, Theme.surfaceContainer.g, Theme.surfaceContainer.b, 0.2)
+                                                radius: 3
+                                            }
+                                        }
+
+                                        Column {
+                                            width: friendScrollView.availableWidth
+                                            spacing: 2
+                                            topPadding: 1
+                                            bottomPadding: 1
+
+                                            Repeater {
+                                                model: modelData.items
+
+                                            delegate: Item {
+                                                id: friendDelegate
+                                                width: parent.width
+                                                height: 54
+
+                                                property bool isHovered: friendMa.containsMouse
+
+                                            Shape {
+                                                id: friendBg
+                                                anchors.fill: parent
+
+                                                property real innerRadius: 6
+                                                property real outerRadius: Theme.cornerRadius || 12
+                                                property bool isFirst: index === 0
+                                                property bool isLast: index === modelData.items.length - 1
+
+                                                property real tlr: isHovered ? (height / 2) : (isFirst ? outerRadius : innerRadius)
+                                                property real trr: isHovered ? (height / 2) : (isFirst ? outerRadius : innerRadius)
+                                                property real blr: isHovered ? (height / 2) : (isLast ? outerRadius : innerRadius)
+                                                property real brr: isHovered ? (height / 2) : (isLast ? outerRadius : innerRadius)
+
+                                                property real tlrAnim: tlr; Behavior on tlrAnim { NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                                                property real trrAnim: trr; Behavior on trrAnim { NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                                                property real blrAnim: blr; Behavior on blrAnim { NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+                                                property real brrAnim: brr; Behavior on brrAnim { NumberAnimation { duration: 600; easing.type: Easing.OutExpo } }
+
+                                                property color paintColor: isHovered
+                                                        ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.1)
+                                                        : Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.04)
+
+                                                property color paintBorder: isHovered
+                                                        ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.4)
+                                                        : Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, 0.15)
+
+                                                ShapePath {
+                                                    fillColor: friendBg.paintColor
+                                                    strokeColor: friendBg.paintBorder
+                                                    strokeWidth: 1
+
+                                                    startX: friendBg.tlrAnim + 1; startY: 1
+                                                    PathLine { x: friendBg.width - friendBg.trrAnim - 1; y: 1 }
+                                                    PathArc { x: friendBg.width - 1; y: friendBg.trrAnim + 1; radiusX: friendBg.trrAnim; radiusY: friendBg.trrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: friendBg.width - 1; y: friendBg.height - friendBg.brrAnim - 1 }
+                                                    PathArc { x: friendBg.width - friendBg.brrAnim - 1; y: friendBg.height - 1; radiusX: friendBg.brrAnim; radiusY: friendBg.brrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: friendBg.blrAnim + 1; y: friendBg.height - 1 }
+                                                    PathArc { x: 1; y: friendBg.height - friendBg.blrAnim - 1; radiusX: friendBg.blrAnim; radiusY: friendBg.blrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: 1; y: friendBg.tlrAnim + 1 }
+                                                    PathArc { x: friendBg.tlrAnim + 1; y: 1; radiusX: friendBg.tlrAnim; radiusY: friendBg.tlrAnim; direction: PathArc.Clockwise }
+                                                }
+                                            }
+
+                                            DankRipple {
+                                                    id: friendRip
+                                                    anchors.fill: parent
+                                                    cornerRadius: friendBg.tlrAnim
+                                                    rippleColor: Theme.primary
+                                                }
+
+                                            RowLayout {
+                                                id: friendRow
+                                                anchors.fill: parent
+                                                anchors.leftMargin: Theme.spacingM
+                                                anchors.rightMargin: Theme.spacingM
+                                                spacing: Theme.spacingM
+
+                                                DankCircularImage {
+                                                    width: 36
+                                                    height: 36
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                    imageSource: modelData.avatarUrl || ""
+                                                    fallbackIcon: "person"
+                                                    cacheImages: true
+                                                }
+
+                                                Column {
+                                                    Layout.fillWidth: true
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                    spacing: 1
+
+                                                    StyledText {
+                                                        width: parent.width
+                                                        text: modelData.name
+                                                        font.pixelSize: Theme.fontSizeMedium
+                                                        font.weight: Font.Medium
+                                                        color: Theme.surfaceText
+                                                        elide: Text.ElideRight
+                                                    }
+
+                                                    StyledText {
+                                                        width: parent.width
+                                                        text: modelData.game && modelData.game.length > 0 ? ("Playing: " + modelData.game) :
+                                                              (modelData.status === "Offline" && root.showLastOnline ? root.formatLastOnline(modelData.lastlogoff) : modelData.status)
+                                                        font.pixelSize: Theme.fontSizeSmall
+                                                        color: isHovered ? Theme.primary : Theme.surfaceVariantText
+                                                        elide: Text.ElideRight
+                                                        visible: text.length > 0
+                                                        Behavior on color { ColorAnimation { duration: 150 } }
+                                                    }
+                                                }
+
+                                                DankIcon {
+                                                    name: "chat"
+                                                    size: 16
+                                                    color: Theme.surfaceVariantText
+                                                    opacity: isHovered ? 0.9 : 0.0
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                                                }
+
+                                                // Status Dot
+                                                Rectangle {
+                                                    width: 8
+                                                    height: 8
+                                                    radius: 4
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                    color: modelData.status === "Playing" ? Theme.primary :
+                                                           modelData.status === "Online" ? "#4CAF50" :
+                                                           modelData.status === "Away" ? "#FFC107" :
+                                                           modelData.status === "Busy" ? "#F44336" :
+                                                           modelData.status === "Snooze" ? "#9E9E9E" :
+                                                           modelData.status === "Looking to Trade" ? "#26A69A" :
+                                                           modelData.status === "Looking to Play" ? "#2196F3" :
+                                                           modelData.status === "Offline" ? "#616161" : "#9C27B0"
+                                                }
+                                            }
+
+                                            MouseArea {
+                                                id: friendMa
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onPressed: (m) => friendRip.trigger(m.x, m.y)
+                                                onClicked: {
+                                                    if (modelData.steamid) {
+                                                        Qt.openUrlExternally("steam://friends/message/" + modelData.steamid)
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
 
-                // No friends online message
-                StyledText {
-                    text: "No friends online"
-                    color: Theme.primary
+                // Dynamic Toast Notification Overlay
+                Rectangle {
+                    id: toastPill
                     anchors.horizontalCenter: parent.horizontalCenter
-                    visible: root.friendsList.length === 0
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: Theme.spacingS
+                    height: 32
+                    width: toastLayout.implicitWidth + Theme.spacingM * 2
+                    radius: height / 2
+                    color: Qt.rgba(Theme.surfaceContainerHighest.r, Theme.surfaceContainerHighest.g, Theme.surfaceContainerHighest.b, 0.95)
+                    border.color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.4)
+                    border.width: 1
+                    z: 999
+                    opacity: toastTimer.running ? 1.0 : 0.0
+                    scale: toastTimer.running ? 1.0 : 0.75
+
+                    Behavior on opacity { NumberAnimation { duration: 200 } }
+                    Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
+
+                    RowLayout {
+                        id: toastLayout
+                        anchors.centerIn: parent
+                        spacing: Theme.spacingXS
+
+                        DankIcon {
+                            name: "info"
+                            size: 16
+                            color: Theme.primary
+                        }
+
+                        StyledText {
+                            text: root.toastText
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.Bold
+                            color: Theme.surfaceText
+                        }
+                    }
                 }
             }
         }
