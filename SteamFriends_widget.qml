@@ -968,20 +968,59 @@ PluginComponent {
                                     }
                                 }
 
-                                Column {
+                                // Friend list container (Scrollable if > 3 items)
+                                Item {
                                     width: parent.width
-                                    spacing: 2
+                                    height: modelData.items.length > 3 ? (3 * 54 + 2 * 2) : (modelData.items.length * 54 + Math.max(0, modelData.items.length - 1) * 2)
                                     visible: modelData.items.length > 0
+                                    clip: true
 
-                                    Repeater {
-                                        model: modelData.items
+                                    ScrollView {
+                                        id: friendScrollView
+                                        anchors.fill: parent
+                                        contentWidth: availableWidth
+                                        clip: true
 
-                                        delegate: Item {
-                                            id: friendDelegate
-                                            width: parent.width
-                                            height: 54
+                                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                        ScrollBar.vertical: ScrollBar {
+                                            id: customScrollBar
+                                            policy: modelData.items.length > 3 ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                                            active: true
+                                            width: 6
 
-                                            property bool isHovered: friendMa.containsMouse
+                                            contentItem: Rectangle {
+                                                implicitWidth: 6
+                                                radius: 3
+                                                color: customScrollBar.pressed 
+                                                       ? Theme.primary 
+                                                       : (customScrollBar.hovered 
+                                                          ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.7) 
+                                                          : Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.4))
+                                                Behavior on color { ColorAnimation { duration: 150 } }
+                                            }
+
+                                            background: Rectangle {
+                                                implicitWidth: 6
+                                                color: Qt.rgba(Theme.surfaceContainer.r, Theme.surfaceContainer.g, Theme.surfaceContainer.b, 0.2)
+                                                radius: 3
+                                            }
+                                        }
+
+                                        Column {
+                                            width: friendScrollView.availableWidth
+                                            spacing: 2
+                                            topPadding: 1
+                                            bottomPadding: 1
+
+                                            Repeater {
+                                                model: modelData.items
+
+                                            delegate: Item {
+                                                id: friendDelegate
+                                                width: parent.width
+                                                height: 54
+
+                                                property bool isHovered: friendMa.containsMouse
 
                                             Shape {
                                                 id: friendBg
@@ -1015,27 +1054,24 @@ PluginComponent {
                                                     strokeColor: friendBg.paintBorder
                                                     strokeWidth: 1
 
-                                                    startX: friendBg.tlrAnim; startY: 0
-                                                    PathLine { x: friendBg.width - friendBg.trrAnim; y: 0 }
-                                                    PathArc { x: friendBg.width; y: friendBg.trrAnim; radiusX: friendBg.trrAnim; radiusY: friendBg.trrAnim; direction: PathArc.Clockwise }
-                                                    PathLine { x: friendBg.width; y: friendBg.height - friendBg.brrAnim }
-                                                    PathArc { x: friendBg.width - friendBg.brrAnim; y: friendBg.height; radiusX: friendBg.brrAnim; radiusY: friendBg.brrAnim; direction: PathArc.Clockwise }
-                                                    PathLine { x: friendBg.blrAnim; y: friendBg.height }
-                                                    PathArc { x: 0; y: friendBg.height - friendBg.blrAnim; radiusX: friendBg.blrAnim; radiusY: friendBg.blrAnim; direction: PathArc.Clockwise }
-                                                    PathLine { x: 0; y: friendBg.tlrAnim }
-                                                    PathArc { x: friendBg.tlrAnim; y: 0; radiusX: friendBg.tlrAnim; radiusY: friendBg.tlrAnim; direction: PathArc.Clockwise }
+                                                    startX: friendBg.tlrAnim + 1; startY: 1
+                                                    PathLine { x: friendBg.width - friendBg.trrAnim - 1; y: 1 }
+                                                    PathArc { x: friendBg.width - 1; y: friendBg.trrAnim + 1; radiusX: friendBg.trrAnim; radiusY: friendBg.trrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: friendBg.width - 1; y: friendBg.height - friendBg.brrAnim - 1 }
+                                                    PathArc { x: friendBg.width - friendBg.brrAnim - 1; y: friendBg.height - 1; radiusX: friendBg.brrAnim; radiusY: friendBg.brrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: friendBg.blrAnim + 1; y: friendBg.height - 1 }
+                                                    PathArc { x: 1; y: friendBg.height - friendBg.blrAnim - 1; radiusX: friendBg.blrAnim; radiusY: friendBg.blrAnim; direction: PathArc.Clockwise }
+                                                    PathLine { x: 1; y: friendBg.tlrAnim + 1 }
+                                                    PathArc { x: friendBg.tlrAnim + 1; y: 1; radiusX: friendBg.tlrAnim; radiusY: friendBg.tlrAnim; direction: PathArc.Clockwise }
                                                 }
                                             }
 
-                                            scale: friendMa.pressed ? 0.98 : (isHovered ? 1.01 : 1.0)
-                                            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack } }
-
                                             DankRipple {
-                                                id: friendRip
-                                                anchors.fill: parent
-                                                cornerRadius: friendBg.tlrAnim
-                                                rippleColor: Theme.primary
-                                            }
+                                                    id: friendRip
+                                                    anchors.fill: parent
+                                                    cornerRadius: friendBg.tlrAnim
+                                                    rippleColor: Theme.primary
+                                                }
 
                                             RowLayout {
                                                 id: friendRow
@@ -1124,6 +1160,8 @@ PluginComponent {
                         }
                     }
                 }
+            }
+        }
 
                 // Dynamic Toast Notification Overlay
                 Rectangle {
