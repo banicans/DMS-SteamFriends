@@ -5,12 +5,12 @@
     "author": "Banicans",
     "version": "1.2.0",
     "icon": "group",
-	"component": "./SteamFriends_widget.qml",
+    "component": "./SteamFriends_widget.qml",
     "settings": "./SteamFriends_settings.qml",
     "type": "widget",
     "capabilities":["dankbar-widget"], 
-	"permissions": [
-		"settings_read",
-		"settings_write"
-	]
+    "permissions": [
+        "settings_read",
+        "settings_write"
+    ]
 }
